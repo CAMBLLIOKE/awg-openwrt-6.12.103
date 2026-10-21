@@ -1,0 +1,55 @@
+name: Build AmneziaWG 3.1 for ImmortalWrt
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build AWG packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential flex bison gawk gettext git libncurses-dev libssl-dev rsync unzip zlib1g-dev file wget zstd
+
+      - name: Download & unpack ImmortalWrt SDK
+        run: |
+          SDK_URL_BASE="https://downloads.immortalwrt.org/releases/25.12.2/targets/mediatek/filogic"
+          SDK_FILE=$(wget -qO- "$SDK_URL_BASE/sha256sums" | grep -o 'immortalwrt-sdk-25.12.2-mediatek-filogic.*\.tar\.[a-z0-9]*' | head -n 1)
+          echo "Found SDK file: $SDK_FILE"
+          wget -q "$SDK_URL_BASE/$SDK_FILE"
+          tar -xf "$SDK_FILE" --strip-components=1
+          rm -f "$SDK_FILE"
+
+      - name: Fetch AmneziaWG 3.1 source
+        run: |
+          git clone --depth 1 https://github.com/2Grey/awg-openwrt.git awg-source
+          mkdir -p package/amneziawg
+          cp -r awg-source/kmod-amneziawg package/amneziawg/ 2>/dev/null || true
+          cp -r awg-source/amneziawg-tools package/amneziawg/ 2>/dev/null || true
+          cp -r awg-source/luci-proto-amneziawg package/amneziawg/ 2>/dev/null || true
+          cp -r awg-source/luci-app-amneziawg package/amneziawg/ 2>/dev/null || true
+          cp -r awg-source/packages/* package/amneziawg/ 2>/dev/null || true
+          rm -rf awg-source
+
+      - name: Update feeds & compile packages
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make defconfig
+          make package/kmod-amneziawg/compile -j$(nproc) V=s
+          make package/amneziawg-tools/compile -j$(nproc) V=s
+          make package/luci-proto-amneziawg/compile -j$(nproc) V=s || make package/luci-app-amneziawg/compile -j$(nproc) V=s
+
+      - name: Collect packages
+        run: |
+          mkdir -p ./output
+          find bin/ -type f \( -name "*amneziawg*.apk" -o -name "*amneziawg*.ipk" \) -exec cp {} ./output/ \;
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: amneziawg-3.1-immortalwrt-25.12.2-filogic
+          path: ./output/*
